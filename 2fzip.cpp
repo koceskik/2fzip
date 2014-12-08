@@ -1,3 +1,9 @@
+/*
+ * 2Factor Zip Copyright (c) 2014 Kyle Koceski
+ * A program for providing 2-Factor authentication to *.zip files via SMS
+ * (via TextBelt API: http://www.textbelt.com) at compression time.
+ */
+
 #include <iostream>
 #include <stdlib.h>
 #include <unistd.h>
@@ -8,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+//Patches a C++11 to_string()
 namespace patch {
 	template<typename T> std::string to_string(const T& n) {
 		std::ostringstream stm;
@@ -18,19 +25,23 @@ namespace patch {
 
 using namespace std;
 
+//CONSTANTS
 const string ZIP = "zip";
 const string UNZIP = "unzip";
 const string TEXTBELT_URL = "http://textbelt.com/text";
 const int MIN_ARG_COUNT = 4;//2fzip -d pwd zipfile
 
+//the authentication code, generated is parseArgs and used for the zipCmd and textCmd
 string theAuthCode;
 
+//Methods for fork()ing the process to generate the zip, text, and revert the zip-generation transaction
 bool generateZip(char** zipCmd);
 bool generateText(string authCode, string phoneNum, string filename);
 void undoGenerateZip(string zipName);
 
+//Prints the proper usage of 2fzip when improper command arguments are provided
 void helpMenu() {
-	cout << "2Factor Zip (c) 2014 Kyle Koceski" << endl;
+	cout << "2Factor Zip Copyright (c) 2014 Kyle Koceski" << endl;
 	cout << "Usage:" << endl;
 	cout << "  2fzip -e password [zip_parameters] zipfilename.2fz filelist" << endl;
 	//         zip -P code:password [zip_parameters] zipfilename.2fz filelist
@@ -45,7 +56,9 @@ void helpMenu() {
 			"  -c   add one-line comments        -z   add zipfile comment"						<< endl;
 }
 
-//helper methods: authCode, mallocCopy, getZipFilename, isEncryption, isDecryption
+//HELPER METHODS:
+//authCode, mallocCopy, getZipFilename, isEncryption, isDecryption
+//generates and returns a random 4-character numeric authentication code
 string authCode() {
 	//Create the random 2-factor authentication code
 	srand (time(NULL));
@@ -58,17 +71,21 @@ string authCode() {
 	return rStr;
 }
 
-//pass a char* (ie character array) by reference to modify it 
+//pass a char* (ie character array) by reference to modify it
+//(useful for allocating space and assigning string values to command parameter array items)
 void mallocCopy(char* &s1, string value) {
 	s1 = (char*)malloc(value.length()+1);
 	strcpy(s1, value.c_str());
 }
+//determines success of TextBelt text via JSON reply analysis of success item
 bool isSuccess(char* jsonReply) {
 	string success = "\"success\": true";
 	if(strstr(jsonReply, success.c_str())) return true;
 	else return false;
 }
 
+//parses the provided argument list for the name of the created zip file
+//useful for texting the name of the file which an authCode unlocks
 string getZipFilename(int argc, char** argv) {
 	if(argc < 4) {
 		return 0;
@@ -80,6 +97,10 @@ string getZipFilename(int argc, char** argv) {
 	return string(argv[i]);
 }
 
+//Determine whether to follow:
+//encryption path (gen auth, gen zip, send text, (revert))
+//OR
+//decryption path (get auth, unzip file)
 bool isEncryption(int argc, char** argv) {
 	if(argc < 2) return false;
 	return (strcmp(argv[1], "-e") == 0);
@@ -115,7 +136,7 @@ char** parseArgs(int argc, char** argv) {
 	}
 
 	zipCmd[0] = cmdType;//zip or unzip
-	mallocCopy(zipCmd[1], "-P");
+	mallocCopy(zipCmd[1], "-P");//password parameter identifier
 	
 	string pwd;
 	if(isEncr) {
@@ -132,17 +153,16 @@ char** parseArgs(int argc, char** argv) {
 	mallocCopy(zipCmd[2], pwd);//authCode:password
 
 	for(int i = 3; i<argc; i++) {
-		zipCmd[i] = argv[i];
+		zipCmd[i] = argv[i];//addition parameters (includes "... zipName [list of files]")
 	}
 	
 	return zipCmd;
 }
 
-//main:
-//parses arguments for a proper (un)zip command, generating an authCode
-//zips file
-//if zip successful, generates text
-//and, if text fails, reverts zip
+// 1.  parses arguments for a proper (un)zip command, generating (or retrieving) an authCode
+// 2.  (un)zips file
+//[3.] if zip successful, generates text
+//[4.] if text fails, reverts zip]
 int main(int argc, char** argv) {
 	char** zipCmd = parseArgs(argc, argv);
 	if(zipCmd == 0) {
